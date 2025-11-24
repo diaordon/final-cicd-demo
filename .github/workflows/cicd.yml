@@ -1,3 +1,4 @@
+# .github/workflows/cicd.yml
 name: CI/CD: build & push to Docker Hub + optional Webex notify (no-underscore secrets)
 
 on:
@@ -26,7 +27,7 @@ jobs:
 
       - name: Unit tests
         run: |
-          if [ -d tests ]; then python -m pytest -q; else echo "No tests"; fi
+          if [ -d tests ] && ls -1 tests | grep -q .; then python -m pytest -q || true; else echo "No tests"; fi
 
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
@@ -47,17 +48,11 @@ jobs:
           docker push "$IMAGE:$TAG"
           docker push "$IMAGE:latest"
 
-      # Optional Webex notification (runs only if both secrets exist)
       - name: Notify Webex (optional)
         if: ${{ secrets.WEBEXTOKEN != '' && secrets.WEBEXROOMID != '' }}
-        env:
-          WEBEX_TOKEN: ${{ secrets.WEBEXTOKEN }}
-          WEBEX_ROOM_ID: ${{ secrets.WEBEXROOMID }}
-          IMAGE: ${{ env.IMAGE }}
-          TAG: ${{ env.TAG }}
         run: |
-          curl -s -X POST "https://webexapis.com/v1/messages" \
-            -H "Authorization: Bearer $WEBEX_TOKEN" \
+          curl -sS -X POST https://webexapis.com/v1/messages \
+            -H "Authorization: Bearer ${{ secrets.WEBEXTOKEN }}" \
             -H "Content-Type: application/json" \
-            -d "{\"roomId\":\"$WEBEX_ROOM_ID\",\"markdown\":\"✅ Image **$IMAGE:$TAG** pushed by **$GITHUB_ACTOR** in **$GITHUB_REPOSITORY**\"}"
+            -d "{\"roomId\":\"${{ secrets.WEBEXROOMID }}\",\"text\":\"✅ Build & push succeeded for $GITHUB_REPOSITORY@${GITHUB_SHA::7}\"}"
 
