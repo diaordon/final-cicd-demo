@@ -1,16 +1,17 @@
-# .github/workflows/cicd.yml
-name: CI/CD: build & push to Docker Hub + optional Webex notify (no-underscore secrets)
+name: "CI/CD – build & push to Docker Hub + optional Webex notify"
 
-on:
+'on':
   push:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
+  workflow_dispatch:
 
 jobs:
   build-test-push:
     runs-on: ubuntu-latest
-
+    env:
+      IMAGE: ${{ secrets.DOCKERHUBUSERNAME }}/hello-app
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -23,11 +24,11 @@ jobs:
       - name: Install deps
         run: |
           python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; else echo "No requirements.txt"; fi
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; else echo "no requirements.txt"; fi
 
       - name: Unit tests
         run: |
-          if [ -d tests ] && ls -1 tests | grep -q .; then python -m pytest -q || true; else echo "No tests"; fi
+          if [ -f pytest.ini ] || [ -d tests ]; then python -m pytest -q || true; else echo "no tests"; fi
 
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
@@ -35,24 +36,20 @@ jobs:
           username: ${{ secrets.DOCKERHUBUSERNAME }}
           password: ${{ secrets.DOCKERHUBTOKEN }}
 
-      - name: Build image
-        run: |
-          IMAGE="${{ secrets.DOCKERHUBUSERNAME }}/hello-app"
-          TAG="${GITHUB_SHA::7}"
-          echo "IMAGE=$IMAGE" >> $GITHUB_ENV
-          echo "TAG=$TAG" >> $GITHUB_ENV
-          docker build -t "$IMAGE:$TAG" -t "$IMAGE:latest" .
-
-      - name: Push image
-        run: |
-          docker push "$IMAGE:$TAG"
-          docker push "$IMAGE:latest"
+      - name: Build and push image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:${{ github.sha }}
 
       - name: Notify Webex (optional)
         if: ${{ secrets.WEBEXTOKEN != '' && secrets.WEBEXROOMID != '' }}
         run: |
-          curl -sS -X POST https://webexapis.com/v1/messages \
+          MSG="✅ Image pushed: ${{ env.IMAGE }}@${{ github.sha }} on ${GITHUB_REF_NAME} by ${GITHUB_ACTOR}"
+          curl -sS -X POST "https://webexapis.com/v1/messages" \
             -H "Authorization: Bearer ${{ secrets.WEBEXTOKEN }}" \
             -H "Content-Type: application/json" \
-            -d "{\"roomId\":\"${{ secrets.WEBEXROOMID }}\",\"text\":\"✅ Build & push succeeded for $GITHUB_REPOSITORY@${GITHUB_SHA::7}\"}"
-
+            -d "{\"roomId\":\"${{ secrets.WEBEXROOMID }}\",\"text\":\"${MSG}\"}"
