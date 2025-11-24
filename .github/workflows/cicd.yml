@@ -1,55 +1,62 @@
-name: CI/CD
+name: CI/CD (build, test, push, optional Webex notify)
 
 on:
   push:
-    branches: [ "main" ]
-  workflow_dispatch:
-
-env:
-  IMAGE_NAME: ${{ secrets.DOCKERHUBUSERNAME }}/hello-app
-  TAG: ${{ github.sha }}
-  # Webex is optional; add the two secrets if you want notifications
-  WEBEX_ROOM_ID: ${{ secrets.WEBEXROOMID }}
-  WEBEX_TOKEN:   ${{ secrets.WEBEXTOKEN }}
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
 
 jobs:
-  build-and-push:
+  build-test-push:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
 
-      - name: Login to Docker Hub
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Unit tests
+        run: |
+          if [ -f pytest.ini ] || [ -d tests ]; then python -m pytest -q; else echo "No tests"; fi
+
+      - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUBUSERNAME }}
           password: ${{ secrets.DOCKERHUBTOKEN }}
 
-      - name: Build & Push image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: ./Dockerfile
-          push: true
-          tags: |
-            ${{ env.IMAGE_NAME }}:latest
-            ${{ env.IMAGE_NAME }}:${{ env.TAG }}
-
-      - name: Notify Webex (success)
-        if: ${{ success() && env.WEBEX_TOKEN != '' && env.WEBEX_ROOM_ID != '' }}
+      - name: Build image
         run: |
-          curl -sS -X POST https://webexapis.com/v1/messages \
+          IMAGE="${{ secrets.DOCKERHUBUSERNAME }}/hello-app"
+          TAG="${{ github.sha }}"
+          echo "IMAGE=$IMAGE" >> $GITHUB_ENV
+          echo "TAG=$TAG" >> $GITHUB_ENV
+          docker build -t "$IMAGE:$TAG" -t "$IMAGE:latest" .
+
+      - name: Push image
+        run: |
+          docker push "$IMAGE:$TAG"
+          docker push "$IMAGE:latest"
+
+      # Optional Webex notification (runs only if both secrets exist)
+      - name: Notify Webex
+        if: ${{ secrets.WEBEXTOKEN != '' && secrets.WEBEXROOMID != '' }}
+        env:
+          WEBEX_TOKEN: ${{ secrets.WEBEXTOKEN }}
+          WEBEX_ROOM_ID: ${{ secrets.WEBEXROOMID }}
+        run: |
+          MSG="✅ Build & push OK for ${IMAGE}:${TAG} (repo: $GITHUB_REPOSITORY)"
+          curl -s -X POST "https://webexapis.com/v1/messages" \
             -H "Authorization: Bearer $WEBEX_TOKEN" \
             -H "Content-Type: application/json" \
-            -d "{\"roomId\":\"$WEBEX_ROOM_ID\",\"markdown\":\"✅ Image pushed: **${{ env.IMAGE_NAME }}:${{ env.TAG }}**\\nRepo: **${{ github.repository }}**\\nRef: \`${{ github.ref_name }}\`\"}"
+            --data "{\"roomId\":\"$WEBEX_ROOM_ID\",\"markdown\":\"$MSG\"}"
 
-      - name: Notify Webex (failure)
-        if: ${{ failure() && env.WEBEX_TOKEN != '' && env.WEBEX_ROOM_ID != '' }}
-        run: |
-          curl -sS -X POST https://webexapis.com/v1/messages \
-            -H "Authorization: Bearer $WEBEX_TOKEN" \
-            -H "Content-Type: application/json" \
-            -d "{\"roomId\":\"$WEBEX_ROOM_ID\",\"markdown\":\"❌ CI/CD failed for **${{ github.repository }}** at \`${{ github.ref_name }}\`\"}"
