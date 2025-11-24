@@ -29,7 +29,7 @@ jobs:
 
       - name: Unit tests
         run: |
-          if [ -f pytest.ini ] || [ -f tests ] ; then python -m pytest -q || true; else echo "No tests"; fi
+          if [ -f pytest.ini ] || [ -d tests ]; then python -m pytest -q || true; else echo "No tests"; fi
 
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
@@ -46,12 +46,19 @@ jobs:
             ${{ env.IMAGE }}:${{ github.sha }}
             ${{ env.IMAGE }}:latest
 
-      # Optional Webex notification (runs only if both secrets exist)
+      # Optional Webex notification – guarded in bash
       - name: Notify Webex (optional)
-        if: ${{ secrets.WEBEXTOKEN != '' && secrets.WEBEXROOMID != '' }}
+        env:
+          WEBEXROOMID: ${{ secrets.WEBEXROOMID }}
+          WEBEXTOKEN: ${{ secrets.WEBEXTOKEN }}
         run: |
-          MSG="✅ Image pushed: ${{ env.IMAGE }}:$(echo $GITHUB_SHA | cut -c1-7) by ${{ github.actor }}"
-          curl -sS -X POST 'https://webexapis.com/v1/messages' \
-            -H 'Authorization: Bearer ${{ secrets.WEBEXTOKEN }}' \
-            -H 'Content-Type: application/json' \
-            -d "{\"roomId\":\"${{ secrets.WEBEXROOMID }}\",\"text\":\"${MSG}\"}"
+          if [ -n "$WEBEXTOKEN" ] && [ -n "$WEBEXROOMID" ]; then
+            MSG="✅ Image pushed: ${{ env.IMAGE }}:$(echo $GITHUB_SHA | cut -c1-7) by ${{ github.actor }}"
+            curl -sS -X POST 'https://webexapis.com/v1/messages' \
+              -H "Authorization: Bearer $WEBEXTOKEN" \
+              -H 'Content-Type: application/json' \
+              -d "{\"roomId\":\"$WEBEXROOMID\",\"text\":\"${MSG}\"}"
+          else
+            echo "WEBEX secrets not set; skipping notify."
+          fi
+
