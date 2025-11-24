@@ -1,10 +1,10 @@
-name: CI/CD (build, test, push, optional Webex notify)
+name: CI/CD: build & push to Docker Hub + optional Webex notify (no-underscore secrets)
 
 on:
   push:
-    branches: [ main ]
+    branches: [ "main" ]
   pull_request:
-    branches: [ main ]
+    branches: [ "main" ]
 
 jobs:
   build-test-push:
@@ -22,11 +22,11 @@ jobs:
       - name: Install deps
         run: |
           python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; else echo "No requirements.txt"; fi
 
       - name: Unit tests
         run: |
-          if [ -f pytest.ini ] || [ -d tests ]; then python -m pytest -q; else echo "No tests"; fi
+          if [ -d tests ]; then python -m pytest -q; else echo "No tests"; fi
 
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
@@ -37,7 +37,7 @@ jobs:
       - name: Build image
         run: |
           IMAGE="${{ secrets.DOCKERHUBUSERNAME }}/hello-app"
-          TAG="${{ github.sha }}"
+          TAG="${GITHUB_SHA::7}"
           echo "IMAGE=$IMAGE" >> $GITHUB_ENV
           echo "TAG=$TAG" >> $GITHUB_ENV
           docker build -t "$IMAGE:$TAG" -t "$IMAGE:latest" .
@@ -48,15 +48,16 @@ jobs:
           docker push "$IMAGE:latest"
 
       # Optional Webex notification (runs only if both secrets exist)
-      - name: Notify Webex
+      - name: Notify Webex (optional)
         if: ${{ secrets.WEBEXTOKEN != '' && secrets.WEBEXROOMID != '' }}
         env:
           WEBEX_TOKEN: ${{ secrets.WEBEXTOKEN }}
           WEBEX_ROOM_ID: ${{ secrets.WEBEXROOMID }}
+          IMAGE: ${{ env.IMAGE }}
+          TAG: ${{ env.TAG }}
         run: |
-          MSG="✅ Build & push OK for ${IMAGE}:${TAG} (repo: $GITHUB_REPOSITORY)"
           curl -s -X POST "https://webexapis.com/v1/messages" \
             -H "Authorization: Bearer $WEBEX_TOKEN" \
             -H "Content-Type: application/json" \
-            --data "{\"roomId\":\"$WEBEX_ROOM_ID\",\"markdown\":\"$MSG\"}"
+            -d "{\"roomId\":\"$WEBEX_ROOM_ID\",\"markdown\":\"✅ Image **$IMAGE:$TAG** pushed by **$GITHUB_ACTOR** in **$GITHUB_REPOSITORY**\"}"
 
